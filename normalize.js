@@ -6,8 +6,6 @@ const TEXTFILE = "nf.txt";
 const SQLFILE = "nf.sql";
 
 
-
-
 // Getting credential and setting up the pool
 const pool = new Pool({
 	host: creds.host,
