@@ -162,7 +162,7 @@ async function columnExist(table, column, sqlStream) {
 
 
 // Function to check if the given PKs are invalid.
-async function checkPK(table, pk, textStream, sqlStream) {
+async function checkPK(table, pk, sqlStream) {
 
 	try {
 
@@ -176,12 +176,10 @@ async function checkPK(table, pk, textStream, sqlStream) {
 
 		if (res.rows.length == 0) {
 			console.log("Given PK is valid.");
-			textStream.write("PK\t\tY\n");
 			return true;
 		}
 		else {
 			console.log("Given PK is invalid.");
-			textStream.write("PK\t\tN\n");
 			return false;
 		}
 	}
@@ -191,15 +189,69 @@ async function checkPK(table, pk, textStream, sqlStream) {
 }
 
 
-// Function to check if the given PKs are invalid.
-async function checkCK(table, pk, textStream, sqlStream) {
+// Function to check for the simple CKs in the table.
+async function checkCK(table, column, sqlStream) {
+
+	try {
+
+		let CK = [];
+
+		for (let icol = 0; icol < column.length; icol++) {
+
+			let query = `SELECT ${column[icol]}, COUNT(*) \nFROM ${table} \nGROUP BY ${column[icol]} \nHAVING COUNT(*) > 1;\n\n`;
+
+			sqlStream.write(query);
+
+			// Get result after running the query
+			const res = await pool.query(query);
+
+			if (res.rows.length == 0) {
+				CK.push(column[icol]);
+			}
+		}
+
+		return CK;
+	}
+	catch (err) {
+		console.log(err.stack);
+	}
+}
 
 
+// Function to check for the non-key attributes in the table.
+async function checkNonKey(COLUMN, CK) {
+	try {
+
+		let nonKey = [];
+
+		for (let icol = 0; icol < COLUMN.length; icol++) {
+
+			let isCK = false;
+
+			for (let ick = 0; ick < CK.length; ick++) {
+
+				if (COLUMN[icol] == CK[ick]) {
+					isCK = true;
+					break;
+				}
+			}
+
+			// Add the attribute to the non-key list if it isn't CK.
+			if (!isCK) {
+				nonKey.push(COLUMN[icol]);
+			}
+		}
+
+		return nonKey;
+	}
+	catch (err) {
+		console.log(err.stack);
+	}
 }
 
 
 // Function to check if the given table meet the requirement of 1NF.
-async function check1NF(table, pk, column, validPK, textStream, sqlStream) {
+async function check1NF(table, pk, column, sqlStream) {
 
 	try {
 
@@ -213,19 +265,10 @@ async function check1NF(table, pk, column, validPK, textStream, sqlStream) {
 
 		if (res.rows.length == 0) {
 			console.log('Meet the requirement for 1NF.');
-
-			if (validPK) {
-				textStream.write("1NF\t\tY\n");
-			}
-			else {
-				textStream.write("1NF\t\tY\n2NF\t\tN\n3NF\t\tN\nBCNF\tN");
-			}
-
 			return true;
 		}
 		else {
 			console.log('Fail the requirement for 1NF.');
-			textStream.write("1NF\t\tN\n2NF\t\tN\n3NF\t\tN\nBCNF\tN");
 			return false;
 		}
 	}
@@ -236,7 +279,7 @@ async function check1NF(table, pk, column, validPK, textStream, sqlStream) {
 
 
 // Function to check if the given table meet the requirement of 2NF.
-async function check2NF(table, pk, column, textStream, sqlStream) {
+async function check2NF(table, pk, column, sqlStream) {
 
 	try {
 
@@ -245,7 +288,6 @@ async function check2NF(table, pk, column, textStream, sqlStream) {
 
 			// If the table has simple PK, it automatically in 2NF.
 			console.log('Meet the requirement for 2NF.');
-			textStream.write("2NF\t\tY\n");
 			return true;
 		}
 		else {
@@ -265,16 +307,16 @@ async function check2NF(table, pk, column, textStream, sqlStream) {
 					if (res.rows.length == 0) {
 
 						console.log('Fail the requirement for 2NF: Detect partial dependency.');
-						textStream.write("2NF\t\tN\n3NF\t\tN\nBCNF\tN");
 						return false;
 					}
 				}
 			}
 
 			console.log('Meet the requirement for 2NF.');
-			textStream.write("2NF\t\tY\n");
 			return true;
 		}
+
+
 	}
 	catch (err) {
 		console.log(err.stack);
@@ -283,30 +325,29 @@ async function check2NF(table, pk, column, textStream, sqlStream) {
 
 
 // Function to check if the given table meet the requirement of 3NF.
-async function check3NF(table, pk, column, textStream, sqlStream) {
+async function check3NF(table, nonKey, sqlStream) {
 
 	try {
 
 		// Check the number of non-key column.
-		if (column.length == 1) {
+		if (nonKey.length <= 1) {
 
-			// If the table has only one non-key attribute, it automatically in 3NF.
+			// If the table has only (or less than) one non-key attribute, it automatically in 3NF.
 			console.log('Meet the requirement for 3NF.');
-			textStream.write("3NF\t\tY\n");
 			return true;
 		}
 		else {
 
 			// If the table has more than one non-key attribute, then should check if exist transitive dependency.
-			for (let icol1 = 0; icol1 < column.length; icol1++) {
-				for (let icol2 = 0; icol2 < column.length; icol2++) {
+			for (let icol1 = 0; icol1 < nonKey.length; icol1++) {
+				for (let icol2 = 0; icol2 < nonKey.length; icol2++) {
 
 					// Skip if two column indexs are the same.
 					if (icol1 == icol2) {
 						continue;
 					}
 
-					let query = `SELECT ${column[icol1]}, COUNT(DISTINCT ${column[icol2]}) \nFROM ${table} \nGROUP BY ${column[icol1]} \nHAVING COUNT(DISTINCT ${column[icol2]}) > 1;\n\n`;
+					let query = `SELECT ${nonKey[icol1]}, COUNT(DISTINCT ${nonKey[icol2]}) \nFROM ${table} \nGROUP BY ${nonKey[icol1]} \nHAVING COUNT(DISTINCT ${nonKey[icol2]}) > 1;\n\n`;
 
 					sqlStream.write(query);
 
@@ -317,14 +358,12 @@ async function check3NF(table, pk, column, textStream, sqlStream) {
 					if (res.rows.length == 0) {
 
 						console.log('Fail the requirement for 3NF: Detect transitive dependency.');
-						textStream.write("3NF\t\tN\nBCNF\tN");
 						return false;
 					}
 				}
 			}
 
 			console.log('Meet the requirement for 3NF.');
-			textStream.write("3NF\t\tY\n");
 			return true;
 		}
 	}
@@ -335,44 +374,32 @@ async function check3NF(table, pk, column, textStream, sqlStream) {
 
 
 // Function to check if the given table meet the requirement of BCNF.
-async function checkBCNF(table, pk, column, textStream, sqlStream) {
+async function checkBCNF(table, pk, nonKey, sqlStream) {
 
 	try {
 
-		// Check the number of PK.
-		if (pk.length == 1) {
+		// Check if exist non-key -> PK dependency.
+		for (let icol = 0; icol < nonKey.length; icol++) {
+			for (let ipk = 0; ipk < pk.length; ipk++) {
 
-			// If the table has simple PK, it automatically in BCNF.
-			console.log('Meet the requirement for BCNF.');
-			textStream.write("BCNF\tY");
-			return;
-		}
-		else if (pk.length == 2) {
+				let query = `SELECT ${nonKey[icol]}, COUNT(DISTINCT ${pk[ipk]}) \nFROM ${table} \nGROUP BY ${nonKey[icol]} \nHAVING COUNT(DISTINCT ${pk[ipk]}) > 1;\n\n`;
 
-			// If the table has composite PK, then should check if exist non-key -> PK dependency.
-			for (let icol = 0; icol < column.length; icol++) {
-				for (let ipk = 0; ipk < pk.length; ipk++) {
+				sqlStream.write(query);
 
-					let query = `SELECT ${column[icol]}, COUNT(DISTINCT ${pk[ipk]}) \nFROM ${table} \nGROUP BY ${column[icol]} \nHAVING COUNT(DISTINCT ${pk[ipk]}) > 1;\n\n`;
+				// Get result after running the query.
+				let res = await pool.query(query);
 
-					sqlStream.write(query);
+				// Non-key -> PK dependency exist.
+				if (res.rows.length == 0) {
 
-					// Get result after running the query.
-					let res = await pool.query(query);
-
-					// Non-key -> PK dependency exist.
-					if (res.rows.length == 0) {
-
-						console.log('Fail the requirement for BCNF: Detect non-key -> PK dependency.');
-						textStream.write("BCNF\tN");
-						return;
-					}
+					console.log('Fail the requirement for BCNF: Detect non-key -> PK dependency.');
+					return false;
 				}
 			}
-
-			console.log('Meet the requirement for BCNF.');
-			textStream.write("BCNF\tY");
 		}
+
+		console.log('Meet the requirement for BCNF.');
+		return true;
 	}
 	catch (err) {
 		console.log(err.stack);
@@ -414,49 +441,70 @@ async function main() {
 		await pkExist(TABLE, PK, SQLSTREAM);
 		await columnExist(TABLE, COLUMN, SQLSTREAM);
 
+		// Check for candidate keys
+		const CK = await checkCK(TABLE, COLUMN, SQLSTREAM);
+		console.log("CK: " + CK);
+
+		// Check for non-key attributes.
+		const NONKEY = await checkNonKey(COLUMN, CK);
+		console.log("NON-KEY: " + NONKEY);
+
 		// Check if the provided PK is valid PK.
-		let isValidPK = await checkPK(TABLE, PK, TEXTSTREAM, SQLSTREAM);
+		let isValidPK = await checkPK(TABLE, PK, SQLSTREAM);
 
 		if (!isValidPK) {
 
 			// Continue to check if it meet 1NF level even though with invalid PK. 
-			await check1NF(TABLE, PK, COLUMN, isValidPK, TEXTSTREAM, SQLSTREAM);
+			let is1NF = await check1NF(TABLE, PK, COLUMN, SQLSTREAM);
+
+			if (is1NF) {
+				TEXTSTREAM.write("PK   N\n1NF  Y\n2NF  N\n3NF  N\nBCNF N");
+			}
+			else {
+				TEXTSTREAM.write("PK   N\n1NF  N\n2NF  N\n3NF  N\nBCNF N");
+			}
 
 			// No need for further checking since the PK is invalid.
 			process.exit();
 		}
 		else {
 
-			// Continue to check if it meet 1NF level. 
-			let is1NF = await check1NF(TABLE, PK, COLUMN, isValidPK, TEXTSTREAM, SQLSTREAM);
+			let is1NF = await check1NF(TABLE, PK, COLUMN, SQLSTREAM);
 
 			if (is1NF) {
 
-				// Continue to check if it meet 2NF level. 
-				let is2NF = await check2NF(TABLE, PK, COLUMN, TEXTSTREAM, SQLSTREAM);
+				let is2NF = await check2NF(TABLE, PK, COLUMN, SQLSTREAM);
 
 				if (is2NF) {
 
-					// Continue to check if it meet 3NF level. 
-					let is3NF = await check3NF(TABLE, PK, COLUMN, TEXTSTREAM, SQLSTREAM);
+					let is3NF = await check3NF(TABLE, NONKEY, SQLSTREAM);
 
 					if (is3NF) {
 
-						// Continue to check if it meet BCNF level. 
-						await checkBCNF(TABLE, PK, COLUMN, TEXTSTREAM, SQLSTREAM);
+						let isBCNF = await checkBCNF(TABLE, PK, NONKEY, SQLSTREAM);
+
+						if (isBCNF) {
+							TEXTSTREAM.write("PK   Y\n1NF  Y\n2NF  Y\n3NF  Y\nBCNF Y");
+						}
+						else {
+							TEXTSTREAM.write("PK   Y\n1NF  Y\n2NF  Y\n3NF  Y\nBCNF N");
+						}
 
 						// No need for further checking.
 						process.exit();
 					}
 					else {
+						TEXTSTREAM.write("PK   Y\n1NF  Y\n2NF  Y\n3NF  N\nBCNF N");
 						process.exit();
 					}
 				}
 				else {
+					TEXTSTREAM.write("PK   Y\n1NF  Y\n2NF  N\n3NF  N\nBCNF N");
 					process.exit();
 				}
 			}
 			else {
+				TEXTSTREAM.write("PK   Y\n1NF  N\n2NF  N\n3NF  N\nBCNF N");
 				process.exit();
 			}
 		}
@@ -474,6 +522,3 @@ async function main() {
 }
 
 main()
-
-// CheckCandidate(): candidate key is any column which is not part of the primary/composite key and contains all unique elements
-// For FD's not involving the PK there must exist at least two repetitions？ what does he mean by two repetitions?
