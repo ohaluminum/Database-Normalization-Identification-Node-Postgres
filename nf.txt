@@ -1,5 +1,0 @@
-PK   Y
-1NF  Y
-2NF  Y
-3NF  Y
-BCNF Y

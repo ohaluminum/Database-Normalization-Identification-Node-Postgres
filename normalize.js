@@ -16,21 +16,6 @@ const pool = new Pool({
 });
 
 
-// Function to append information to the file stream.
-function openFile(filename) {
-	try {
-		// Delete the file if exist.
-		if (fs.existsSync(filename)) {
-			fs.unlink(filename, function (err) { if (err) { console.log(err); } });
-			fs.writeFile(filename, "", function (err) { if (err) { console.log(err); } });
-		}
-	}
-	catch (err) {
-		console.log(err.stack);
-	}
-}
-
-
 // Function to read and return the parameter list from the user input.
 function readParam() {
 	try {
@@ -78,7 +63,7 @@ function readParam() {
 
 
 // Function to check if the given table exist in the schema.
-async function tableExist(table, sqlStream) {
+async function tableExist(table, textStream, sqlStream) {
 
 	try {
 
@@ -94,6 +79,7 @@ async function tableExist(table, sqlStream) {
 
 			// End program.
 			console.log("Error: Inputted table name does not exist in the database.");
+			textStream.write(": Invalid Input\n\n");
 			process.exit();
 		}
 	}
@@ -104,9 +90,15 @@ async function tableExist(table, sqlStream) {
 
 
 // Function to check if the given PKs exist in the table.
-async function pkExist(table, pk, sqlStream) {
+async function pkExist(table, pk, textStream, sqlStream) {
 
 	try {
+
+		// Check if the number of PK more than 2.
+		if (pk.length > 2) {
+			textStream.write(": Invalid Input\n\n");
+			process.exit();
+		}
 
 		for (let ipk = 0; ipk < pk.length; ipk++) {
 
@@ -122,6 +114,7 @@ async function pkExist(table, pk, sqlStream) {
 
 				// End program.
 				console.log("Error: Inputted PK name does not exist in the table.");
+				textStream.write(": Invalid Input\n\n");
 				process.exit();
 			}
 		}
@@ -133,7 +126,7 @@ async function pkExist(table, pk, sqlStream) {
 
 
 // Function to check if the given columns exist in the table.
-async function columnExist(table, column, sqlStream) {
+async function columnExist(table, column, textStream, sqlStream) {
 
 	try {
 
@@ -151,8 +144,39 @@ async function columnExist(table, column, sqlStream) {
 
 				// End program.
 				console.log("Error: Inputted column name does not exist in the table.");
+				textStream.write(": Invalid Input\n\n");
 				process.exit();
 			}
+		}
+	}
+	catch (err) {
+		console.log(err.stack);
+	}
+}
+
+
+// Function to check if the number of rows in the table.
+async function checkNumRows(table, textStream, sqlStream) {
+
+	try {
+
+		// Build the SELECT statement query.
+		let query = `SELECT * FROM ${table};\n\n`;
+
+		sqlStream.write(query);
+
+		// Get result after running the query
+		const res = await pool.query(query);
+
+		if (res.rows.length == 0) {
+			console.log("The table is empty.");
+			textStream.write(": Empty Table\n\n");
+			process.exit();
+		}
+		else if (res.rows.length == 1) {
+			console.log("The table has only one row.");
+			textStream.write(": Single Row Table\n\n");
+			process.exit();
 		}
 	}
 	catch (err) {
@@ -425,10 +449,6 @@ async function main() {
 		await pool.connect();
 		console.log("Connection Successful.");
 
-		// Setup file system
-		openFile(TEXTFILE);
-		openFile(SQLFILE);
-
 		const TEXTSTREAM = fs.createWriteStream(TEXTFILE, { flags: 'a' });     // Flags a: Appending mode. 
 		const SQLSTREAM = fs.createWriteStream(SQLFILE, { flags: 'a' });
 
@@ -436,10 +456,16 @@ async function main() {
 		TEXTSTREAM.on('error', (err) => console.log(err.stack));
 		SQLSTREAM.on('error', (err) => console.log(err.stack));
 
-		// Check for given table and column
-		await tableExist(TABLE, SQLSTREAM);
-		await pkExist(TABLE, PK, SQLSTREAM);
-		await columnExist(TABLE, COLUMN, SQLSTREAM);
+		// Print out table name.
+		TEXTSTREAM.write(TABLE[0]);
+
+		// Check for given table and column.
+		await tableExist(TABLE, TEXTSTREAM, SQLSTREAM);
+		await pkExist(TABLE, PK, TEXTSTREAM, SQLSTREAM);
+		await columnExist(TABLE, COLUMN, TEXTSTREAM, SQLSTREAM);
+
+		// Check for number of rows.
+		await checkNumRows(TABLE, TEXTSTREAM, SQLSTREAM);
 
 		// Check for candidate keys
 		const CK = await checkCK(TABLE, COLUMN, SQLSTREAM);
@@ -458,10 +484,10 @@ async function main() {
 			let is1NF = await check1NF(TABLE, PK, COLUMN, SQLSTREAM);
 
 			if (is1NF) {
-				TEXTSTREAM.write("PK   N\n1NF  Y\n2NF  N\n3NF  N\nBCNF N");
+				TEXTSTREAM.write("\npk N\n1nf Y\n2nf N\n3nf N\nbcnf N\n\n");
 			}
 			else {
-				TEXTSTREAM.write("PK   N\n1NF  N\n2NF  N\n3NF  N\nBCNF N");
+				TEXTSTREAM.write("\npk N\n1nf N\n2nf N\n3nf N\nbcnf N\n\n");
 			}
 
 			// No need for further checking since the PK is invalid.
@@ -484,27 +510,27 @@ async function main() {
 						let isBCNF = await checkBCNF(TABLE, PK, NONKEY, SQLSTREAM);
 
 						if (isBCNF) {
-							TEXTSTREAM.write("PK   Y\n1NF  Y\n2NF  Y\n3NF  Y\nBCNF Y");
+							TEXTSTREAM.write("\npk Y\n1nf Y\n2nf Y\n3nf Y\nbcnf Y\n\n");
 						}
 						else {
-							TEXTSTREAM.write("PK   Y\n1NF  Y\n2NF  Y\n3NF  Y\nBCNF N");
+							TEXTSTREAM.write("\npk Y\n1nf Y\n2nf Y\n3nf Y\nbcnf N\n\n");
 						}
 
 						// No need for further checking.
 						process.exit();
 					}
 					else {
-						TEXTSTREAM.write("PK   Y\n1NF  Y\n2NF  Y\n3NF  N\nBCNF N");
+						TEXTSTREAM.write("\npk Y\n1nf Y\n2nf Y\n3nf N\nbcnf N\n\n");
 						process.exit();
 					}
 				}
 				else {
-					TEXTSTREAM.write("PK   Y\n1NF  Y\n2NF  N\n3NF  N\nBCNF N");
+					TEXTSTREAM.write("\npk Y\n1nf Y\n2nf N\n3nf N\nbcnf N\n\n");
 					process.exit();
 				}
 			}
 			else {
-				TEXTSTREAM.write("PK   Y\n1NF  N\n2NF  N\n3NF  N\nBCNF N");
+				TEXTSTREAM.write("\npk Y\n1nf N\n2nf N\n3nf N\nbcnf N\n\n");
 				process.exit();
 			}
 		}
