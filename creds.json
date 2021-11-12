@@ -1,7 +1,0 @@
-{
-    "host": "3380db.cs.uh.edu",
-    "user": "dbs046",
-    "password": "1810009H",
-    "port": 5432,
-    "database": "COSC3380"
-}
